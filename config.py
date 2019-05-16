@@ -57,6 +57,8 @@ class config(object):
     decay_steps=100
     epoches=10000
     is_demo=True
+    period=100
+    checkpoint=1000
     model_dir='model'
     data_dir='data'
     log_dir='log'

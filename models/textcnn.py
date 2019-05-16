@@ -169,7 +169,15 @@ def train(config, optimizer='Adam', restore=False):
                 saver.restore(sess, tf.train.latest_checkpoint(config.textCNN_path))
             global_step = max(sess.run(model.global_step), 1)
             logger.info("global_step = %s".format(global_step))
-
+            training_iters = train_dataset.output_shapes[0] // config.batch_size
+            for epoch in range(config.epoches):
+                for iter in tqdm(range((epoch * training_iters), ((epoch + 1) * training_iters))):
+                    loss, train_op = sess.run([model.loss_val, model.train_op], feed_dict=
+                    {handle: train_handle, model.is_training_flag: True})
+                    if iter % config.period == 0:
+                        loss_sum = tf.Summary(value=[tf.Summary.Value(tag="model/loss", simple_value=loss), ])
+                        writer.add_summary(loss_sum, iter)
+                    if iter % config.checkpoint==0:
 
 
             for _ in tqdm(range(global_step, config.num_steps + 1)):
