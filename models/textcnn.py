@@ -7,6 +7,8 @@ import shutil
 import os
 from data_provider import load_data
 from tqdm import tqdm
+import math
+import numpy as np
 
 logging.basicconfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -169,7 +171,7 @@ def train(config, optimizer='Adam', restore=False):
                 saver.restore(sess, tf.train.latest_checkpoint(config.textCNN_path))
             global_step = max(sess.run(model.global_step), 1)
             logger.info("global_step = %s".format(global_step))
-            training_iters = train_dataset.output_shapes[0] // config.batch_size
+            training_iters = math.ceil(train_dataset.output_shapes[0] / config.batch_size)
             for epoch in range(config.epoches):
                 for iter in tqdm(range((epoch * training_iters), ((epoch + 1) * training_iters))):
                     loss, train_op = sess.run([model.loss_val, model.train_op], feed_dict=
@@ -214,3 +216,6 @@ def train(config, optimizer='Adam', restore=False):
                     filename = os.path.join(
                         config.save_dir, "model_{}.ckpt".format(global_step))
                     saver.save(sess, filename)
+
+
+
