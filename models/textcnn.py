@@ -8,6 +8,7 @@ import os
 from data_provider import load_data
 from tqdm import tqdm
 import math
+from .util import evaluate_batch
 import numpy as np
 
 logging.basicconfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -143,9 +144,6 @@ def train(config, optimizer='Adam', restore=False):
     if not os.path.exists(config.model_path):
         logger.info("Allocating '{:}'".format(config.textCNN_path))
 
-    epoches = config.epoches
-    save_path = os.path.join(config.textCNN_path, "model.ckpt")
-
     graph = tf.Graph()
 
     with graph.as_default() as g:
@@ -161,6 +159,9 @@ def train(config, optimizer='Adam', restore=False):
         sess_config = tf.ConfigProto(allow_soft_placement=True)
         sess_config.gpu_options.allow_growth = True
 
+        patience = 0
+        best_f1 = 0.
+
         with tf.Session(config=sess_config) as sess:
             writer = tf.summary.FileWriter(config.textCNN_log)
             sess.run(tf.global_variables_initializer())
@@ -172,6 +173,9 @@ def train(config, optimizer='Adam', restore=False):
             global_step = max(sess.run(model.global_step), 1)
             logger.info("global_step = %s".format(global_step))
             training_iters = math.ceil(train_dataset.output_shapes[0] / config.batch_size)
+            # TODO get train_eval_file
+            # TODO get dev_eval_file
+            # TODO get dev_num_bathes
             for epoch in range(config.epoches):
                 for iter in tqdm(range((epoch * training_iters), ((epoch + 1) * training_iters))):
                     loss, train_op = sess.run([model.loss_val, model.train_op], feed_dict=
@@ -179,43 +183,28 @@ def train(config, optimizer='Adam', restore=False):
                     if iter % config.period == 0:
                         loss_sum = tf.Summary(value=[tf.Summary.Value(tag="model/loss", simple_value=loss), ])
                         writer.add_summary(loss_sum, iter)
-                    if iter % config.checkpoint==0:
+                    if iter % config.checkpoint == 0:
+                        _, summ = evaluate_batch(model, config.val_num_batches, train_eval_file, sess, "train", handle,
+                                                 train_handle)
+                        for s in summ:
+                            writer.add_summary(s, iter)
+                        metrics, summ = evaluate_batch(model, dev_num_bathes, dev_eval_file, sess, "dev", handle,
+                                                       dev_handle)
+                        dev_f1 = metrics["f1"]
+                        if dev_f1 < best_f1:
+                            patience += 1
+                            if patience > config.early_stop:
+                                break
+                        else:
+                            patience = 0
+                            best_f1 = max(best_f1, dev_f1)
+                        for s in summ:
+                            writer.add_summary(s, iter)
+                        writer.flush()
+                        filename = os.path.join(config.textCNN_path, "model_{}.ckpt".format(iter))
+                        saver.save(sess, filename)
 
-
-            for _ in tqdm(range(global_step, config.num_steps + 1)):
-                global_step = sess.run(model.global_step) + 1
-                loss, train_op = sess.run([model.loss_val, model.train_op], feed_dict={
-                    handle: train_handle, model.dropout: config.dropout})
-                if global_step % config.period == 0:
-                    loss_sum = tf.Summary(value=[tf.Summary.Value(
-                        tag="model/loss", simple_value=loss), ])
-                    writer.add_summary(loss_sum, global_step)
-                if global_step % config.checkpoint == 0:
-                    _, summ = evaluate_batch(
-                        model, config.val_num_batches, train_eval_file, sess, "train", handle, train_handle)
-                    for s in summ:
-                        writer.add_summary(s, global_step)
-
-                    metrics, summ = evaluate_batch(
-                        model, dev_total // config.batch_size + 1, dev_eval_file, sess, "dev", handle, dev_handle)
-
-                    dev_f1 = metrics["f1"]
-                    dev_em = metrics["exact_match"]
-                    if dev_f1 < best_f1 and dev_em < best_em:
-                        patience += 1
-                        if patience > config.early_stop:
-                            break
-                    else:
-                        patience = 0
-                        best_em = max(best_em, dev_em)
-                        best_f1 = max(best_f1, dev_f1)
-
-                    for s in summ:
-                        writer.add_summary(s, global_step)
-                    writer.flush()
-                    filename = os.path.join(
-                        config.save_dir, "model_{}.ckpt".format(global_step))
-                    saver.save(sess, filename)
+def predict():
 
 
 
