@@ -40,11 +40,12 @@ def process_file(filename, data_type, word_counter, char_counter, seq=';'):
         for line in lines:
             total += 1
             text_tokens = word_tokenize(line.split(seq)[3])
+            text_chars = [list(token) for token in text_tokens]
             for token in text_tokens:
                 word_counter[token] += 1
                 for char in token:
                     char_counter[char] += 1
-            example = {'id': total, 'text': text_tokens, 'label': line.split(seq)[1]}
+            example = {'id': total, 'text': text_tokens, 'text_chars': text_chars, 'label': line.split(seq)[1]}
             examples.append(example)
             eval_examples[str(total)] = {'text': line.split(seq)[3], 'label': line.split(seq)[1]}
         random.shuffle(examples)
@@ -95,6 +96,8 @@ def build_features(config, examples, data_type, out_file, word2idx_dict, char2id
     writer = tf.python_io.TFRecordWriter(out_file)
     for example in tqdm(examples):
         context_idxs = np.zeros([config.max_sequence_length], dtype=np.int32)
+        context_char_idxs = np.zeros([config.max_sequence_length, config.char_limit], dtype=np.int32)
+
         def _get_word(word):
             for each in (word, word.lower(), word.capitalize(), word.upper()):
                 if each in word2idx_dict:
@@ -111,13 +114,20 @@ def build_features(config, examples, data_type, out_file, word2idx_dict, char2id
                 context_idxs[i] = _get_word(token)
 
         if config.use_char:
-            for i, char in enumerate(example[])
+            for i, token in enumerate(example['text']):
+                chars = list(token)
+                for j, char in enumerate(chars):
+                    if j == config.char_limit:
+                        break
+                    else:
+                        context_char_idxs[i, j] = _get_char(char)
 
         label = example['label']
 
         record = tf.train.Example(features=tf.train.Features(feature={
             "id": tf.train.Feature(int64_list=tf.train.Int64List(value=[label])),
             "text_idxs": tf.train.Feature(bytes_list=tf.train.BytesList(value=[context_idxs.tostring()])),
+            "char_idxs": tf.train.Feature(bytes_list=tf.train.BytesList(value=[context_char_idxs.tostring()])),
             "label": tf.train.Feature(int64_list=tf.train.Int64List(value=[label]))
         }))
         writer.write(record.SerializeToString())

@@ -38,17 +38,20 @@ def evaluate_batch(model, num_batches, eval_file, sess, data_type, handle, str_h
     return metrics, [loss_sum, pre_sum, recall_sum, f1_sum]
 
 
-def get_record_parser(config, is_test=False):
+def get_record_parser(config):
     def parse(example):
         features = tf.parse_single_example(example,
                                            features={
                                                "text_idxs": tf.FixedLenFeature([], tf.string),
+                                               "text_char_idxs": tf.FixedLenFeature([], tf.string),
                                                "label": tf.FixedLenFeature([], tf.string)
                                            })
         text_idxs = tf.reshape(tf.decode_raw(
             features["text_idxs"], tf.int32), [config.max_sequence_length])
+        text_char_idxs = tf.reshape(tf.decode_raw(
+            features["text_char_idxs"], tf.int32), [config.max_sequence_length])
         label = features["label"]
-        return text_idxs, label
+        return text_idxs, text_char_idxs, label
 
     return parse
 

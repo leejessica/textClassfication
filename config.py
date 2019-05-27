@@ -40,8 +40,10 @@ class config(object):
     # Set universal hyperparameter
     is_demo=False
     batch_size = 256
+    val_num_batches=10
     epoches = 64
     max_sequence_length = 400
+    char_limit=10
     use_word = True
     use_char = True
     word_dim = 300
@@ -56,6 +58,7 @@ class config(object):
     decay_rate=0.96
     decay_steps=100
     epoches=10000
+    early_stop=10
     is_demo=True
     period=100
     checkpoint=1000
