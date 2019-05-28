@@ -66,6 +66,8 @@ class config(object):
     model_dir='model'
     data_dir='data'
     log_dir='log'
+    train_record_file=""
+    dev_record_file=""
 
 
     # ------------------------------------------------------------------

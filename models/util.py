@@ -20,9 +20,9 @@ def evaluate_batch(model, num_batches, eval_file, sess, data_type, handle, str_h
     for _ in tqdm(range(1, num_batches + 1)):
         text_id, loss, y = sess.run(
             [model.text_id, model.loss_val, model.y], feed_dict={handle: str_handle, model.is_training_flag: False})
-        answer_dict_={}
+        answer_dict_ = {}
         for id, label in zip(text_id, y):
-            answer_dict_[str(id)]=label
+            answer_dict_[str(id)] = label
         answer_dict.update(answer_dict_)
         losses.append(loss)
     loss = np.mean(losses)
