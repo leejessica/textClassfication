@@ -5,9 +5,7 @@ import logging
 from .layer import conv, batch_norm, relu, max_pool, linear
 import shutil
 import os
-from data_provider import load_data
 from tqdm import tqdm
-import math
 from .util import evaluate_batch, get_batch_dataset, get_record_parser
 import numpy as np
 
@@ -33,27 +31,34 @@ class TextCNN:
         self.global_step = tf.get_variable('global_step', dtype=tf.int32, initializer=tf.constant_initializer(0),
                                            trainable=False)
         if config.use_word:
-            self.embed_size = config.word_dim
             self.word_mat = tf.get_variable("word_mat", initializer=tf.constant(config.word_mat, dtype=tf.float32),
                                             trainable=False)
+        if config.use_char:
+            self.char_mat = tf.get_variable("char_mat", initializer=tf.constant(config.char_mat, dtype=tf.float32),
+                                            trainable=False)
+
         if config.multi_label_flag:
             if config.is_demo:
-                self.x = tf.placeholder("float", shape=[None, None, self.embed_size], name="x")
+                self.x_word = tf.placeholder("float", shape=[None, config.max_sequence_length], name="x_word")
+                self.x_char = tf.placeholder("flaot", shape=[None, config.max_sequence_length, config.char_limit],
+                                             name="x_char")
                 self.y = tf.placeholder("float", shape=[None, self.num_classes], name="y")
             else:
-                self.x, self.y = batch.get_next()
+                self.x_word, self.x_char, self.y = batch.get_next()
             self.loss_val = self.loss_multilabel()
         else:
             if config.is_demo:
-                self.x = tf.placeholder("float", shape=[None, None, self.embed_size], name="x")
+                self.x_word = tf.placeholder("float", shape=[None, config.max_sequence_length], name="x_word")
+                self.x_char = tf.placeholder("float", shape=[None, config.max_sequence_length, config.char_limit],
+                                             name="x_char")
                 self.y = tf.placeholder("float", shape=[None], name="y")
             else:
-                self.x, self.y, = batch.get_next()
+                self.x_word, self.x_char, self.y = batch.get_next()
             self.loss_val = self.loss()
 
         self.is_training_flag = tf.placeholder(tf.bool, name="is_training_flag")
 
-        self.logits = self.forward(self.x)
+        self.logits = self.forward()
         self.loss = self.loss_val(logits=self.logits, label=self.y)
 
         if self.is_training_flag:
@@ -82,12 +87,30 @@ class TextCNN:
             outputs = max_pool(relu2, pool_size=pool_size, reuse=reuse)
             return outputs
 
-    def forward(self, reuse=None):
+    def forward(self, is_max=True, reuse=None):
 
         with tf.variable_scope("Input_Embedding_Layer", reuse=reuse):
+            word_shape = tf.shape(self.x_word)
+            word_emb = tf.get_variable(initializer=tf.zeros_initializer,
+                                       shape=[word_shape[0], word_shape[1], self.config.word_dim], name="word_emb")
+            char_shape = tf.shape(self.x_char)
+            char_emb = tf.get_variable(initializer=tf.zeros_initializer,
+                                       shape=[char_shape[0], char_shape[1], char_shape[2], self.config.char_dim],
+                                       name="char_emb")
             if self.config.use_word:
-                word_emb = tf.reshape(tf.nn.embedding_lookup(self.word_mat, self.x),
-                                      [self.batch_size, self.config.max_sequence_length, self.embed_size])
+                word_emb = tf.reshape(tf.nn.embedding_lookup(self.word_mat, self.x_word),
+                                      [self.batch_size, self.config.max_sequence_length, self.config.word_dim])
+            if self.config.use_char:
+                char_emb = tf.reshape(tf.nn.embedding_lookup(self.char_mat, self.x_char),
+                                      [self.batch_size, self.config.max_sequence_length, self.config.char_limit,
+                                       self.config.char_dim])
+                if is_max:
+                    char_emb=tf.reduce_max(char_emb, axis=-1)
+                else:
+                    char_emb=tf.reduce_mean(char_emb, axis=-1)
+
+            if self.config.use_char:
+                input=
 
         with tf.variable_scope("TextCNN", reuse=reuse):
             block_outputs = []
