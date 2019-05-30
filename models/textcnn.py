@@ -14,62 +14,65 @@ logger = logging.getLogger(__name__)
 
 
 class TextCNN:
-    def __init__(self, config, batch, optimizer='Adam'):
-        self.config = config
-        self.filter_sizes = config.filter_sizes
-        self.num_classes = config.num_classes
-        self.batch_size = config.batch_size
-        self.sequence_length = config.max_sequence_length
-        self.vocab_size = config.vocab_size
-        self.learning_rate = tf.Variable(config.learning_rate, trainable=False,
-                                         name="learning_rate")  # ADD learning_rate
-        self.learning_rate_decay_half_op = tf.assign(self.learning_rate, self.learning_rate * config.decay_rate_big)
-        self.num_filters = config.num_filters
-        self.initializer = config.initializer
-        self.linear_hidden_size = config.linear_hidden_size
-        self.pool_size = config.pool_size
-        self.global_step = tf.get_variable('global_step', dtype=tf.int32, initializer=tf.constant_initializer(0),
-                                           trainable=False)
-        if config.use_word:
-            self.word_mat = tf.get_variable("word_mat", initializer=tf.constant(config.word_mat, dtype=tf.float32),
-                                            trainable=False)
-        if config.use_char:
-            self.char_mat = tf.get_variable("char_mat", initializer=tf.constant(config.char_mat, dtype=tf.float32),
-                                            trainable=False)
+    def __init__(self, config, batch, optimizer='Adam', graph=None):
+        self.graph = graph if graph is not None else tf.Graph()
+        with self.graph.as_default():
+            self.config = config
+            self.filter_sizes = config.filter_sizes
+            self.num_classes = config.num_classes
+            self.batch_size = config.batch_size
+            self.sequence_length = config.max_sequence_length
+            self.vocab_size = config.vocab_size
+            self.learning_rate = tf.Variable(config.learning_rate, trainable=False,
+                                             name="learning_rate")  # ADD learning_rate
+            self.learning_rate_decay_half_op = tf.assign(self.learning_rate, self.learning_rate * config.decay_rate_big)
+            self.num_filters = config.num_filters
+            self.initializer = config.initializer
+            self.linear_hidden_size = config.linear_hidden_size
+            self.pool_size = config.pool_size
+            self.global_step = tf.get_variable('global_step', dtype=tf.int32, initializer=tf.constant_initializer(0),
+                                               trainable=False)
+            if config.use_word:
+                self.word_mat = tf.get_variable("word_mat", initializer=tf.constant(config.word_mat, dtype=tf.float32),
+                                                trainable=False)
+            if config.use_char:
+                self.char_mat = tf.get_variable("char_mat", initializer=tf.constant(config.char_mat, dtype=tf.float32),
+                                                trainable=False)
 
-        if config.multi_label_flag:
-            if config.is_demo:
-                self.x_word = tf.placeholder("float", shape=[None, config.max_sequence_length], name="x_word")
-                self.x_char = tf.placeholder("flaot", shape=[None, config.max_sequence_length, config.char_limit],
-                                             name="x_char")
-                self.y = tf.placeholder("float", shape=[None, self.num_classes], name="y")
+            if config.multi_label_flag:
+                if config.is_demo:
+                    self.x_word = tf.placeholder("float", shape=[None, config.max_sequence_length], name="x_word")
+                    self.x_char = tf.placeholder("flaot", shape=[None, config.max_sequence_length, config.char_limit],
+                                                 name="x_char")
+                    self.y = tf.placeholder("float", shape=[None, self.num_classes], name="y")
+                else:
+                    self.x_word, self.x_char, self.y = batch.get_next()
+                    self.loss_val = self.loss_multilabel()
             else:
-                self.x_word, self.x_char, self.y = batch.get_next()
-            self.loss_val = self.loss_multilabel()
-        else:
-            if config.is_demo:
-                self.x_word = tf.placeholder("float", shape=[None, config.max_sequence_length], name="x_word")
-                self.x_char = tf.placeholder("float", shape=[None, config.max_sequence_length, config.char_limit],
-                                             name="x_char")
-                self.y = tf.placeholder("float", shape=[None], name="y")
-            else:
-                self.x_word, self.x_char, self.y = batch.get_next()
-            self.loss_val = self.loss()
+                if config.is_demo:
+                    self.x_word = tf.placeholder("float", shape=[None, config.max_sequence_length], name="x_word")
+                    self.x_char = tf.placeholder("float", shape=[None, config.max_sequence_length, config.char_limit],
+                                                 name="x_char")
+                    self.y = tf.placeholder("float", shape=[None], name="y")
+                else:
+                    self.x_word, self.x_char, self.y = batch.get_next()
+                    self.loss_val = self.loss()
 
-        self.is_training_flag = tf.placeholder(tf.bool, name="is_training_flag")
+            self.is_training_flag = tf.placeholder(tf.bool, name="is_training_flag")
 
-        self.logits = self.forward()
-        self.loss = self.loss_val(logits=self.logits, label=self.y)
+            self.logits = self.forward()
+            self.loss = self.loss_val(logits=self.logits, label=self.y)
 
-        if self.is_training_flag:
-            opt_list = ['Adagrad', 'Adam', 'Ftrl', 'Momentum', 'RMSProp', 'SGD']
-            if optimizer not in opt_list:
-                raise ValueError('optimizer name must in:', ', '.join(str(p) for p in opt_list))
-            self.learning_rate = tf.train.exponential_decay(config.learning_rate, self.global_step, config.decay_steps,
-                                                            config.decay_rate, staircase=True)
-            self.train_op = tf.contrib.layers.optimize_loss(self.loss_val, global_step=self.global_step,
-                                                            learning_rate=self.learning_rate, optimizer="Adam",
-                                                            clip_gradients=config.clip_gradients)
+            if self.is_training_flag:
+                opt_list = ['Adagrad', 'Adam', 'Ftrl', 'Momentum', 'RMSProp', 'SGD']
+                if optimizer not in opt_list:
+                    raise ValueError('optimizer name must in:', ', '.join(str(p) for p in opt_list))
+                self.learning_rate = tf.train.exponential_decay(config.learning_rate, self.global_step,
+                                                                config.decay_steps,
+                                                                config.decay_rate, staircase=True)
+                self.train_op = tf.contrib.layers.optimize_loss(self.loss_val, global_step=self.global_step,
+                                                                learning_rate=self.learning_rate, optimizer="Adam",
+                                                                clip_gradients=config.clip_gradients)
 
     def encoder_block(self, inputs, filter_size, pool_size, reuse=None):
         """
@@ -88,7 +91,6 @@ class TextCNN:
             return outputs
 
     def forward(self, is_max=True, reuse=None):
-
         with tf.variable_scope("Input_Embedding_Layer", reuse=reuse):
             word_shape = tf.shape(self.x_word)
             word_emb = tf.get_variable(initializer=tf.zeros_initializer,
@@ -105,17 +107,19 @@ class TextCNN:
                                       [self.batch_size, self.config.max_sequence_length, self.config.char_limit,
                                        self.config.char_dim])
                 if is_max:
-                    char_emb=tf.reduce_max(char_emb, axis=-1)
+                    char_emb = tf.reduce_max(char_emb, axis=-1)
                 else:
-                    char_emb=tf.reduce_mean(char_emb, axis=-1)
+                    char_emb = tf.reduce_mean(char_emb, axis=-1)
 
             if self.config.use_char:
-                input=
+                input_emb = tf.concat(values=[word_emb, char_emb], axis=-1, name="input_emb")
+            else:
+                input_emb = word_emb
 
         with tf.variable_scope("TextCNN", reuse=reuse):
             block_outputs = []
             for i, filter_size in enumerate(self.filter_sizes):
-                block_outputs[i] = self.encoder_block(word_emb, filter_size, self.pool_size, reuse=reuse)
+                block_outputs[i] = self.encoder_block(input_emb, filter_size, self.pool_size, reuse=reuse)
             concat = tf.concat(block_outputs, axis=1, name='concat')
             flatten = tf.layers.flatten(concat)
             linear1 = linear(flatten, units=self.linear_hidden_size, name='linear_1', reuse=reuse)
@@ -152,83 +156,111 @@ class TextCNN:
             loss = loss + l2_losses
         return loss
 
+    def train(config, optimizer='Adam', restore=False):
+        """
+        :param optimizer: name of optimizer, full list in OPTIMIZER_CLS_NAMES constant
+        :param restore: Flag if previous model should be restored
+        :return:
+        """
 
-def train(config, optimizer='Adam', restore=False):
-    """
-    :param optimizer: name of optimizer, full list in OPTIMIZER_CLS_NAMES constant
-    :param restore: Flag if previous model should be restored
-    :return:
-    """
+        if not restore:
+            logger.info("Removing '{:}'".format(config.textCNN_path))
+            shutil.rmtree(config.model_path, ignore_errors=True)
 
-    if not restore:
-        logger.info("Removing '{:}'".format(config.textCNN_path))
-        shutil.rmtree(config.model_path, ignore_errors=True)
+        if not os.path.exists(config.model_path):
+            logger.info("Allocating '{:}'".format(config.textCNN_path))
 
-    if not os.path.exists(config.model_path):
-        logger.info("Allocating '{:}'".format(config.textCNN_path))
+        graph = tf.Graph()
 
-    graph = tf.Graph()
+        parser = get_record_parser(config)
 
-    parser = get_record_parser(config)
+        with graph.as_default() as g:
+            train_dataset = get_batch_dataset(config.train_record_file, parser, config)
+            dev_dataset = get_batch_dataset(config.dev_record_file, parser, config)
+            handle = tf.placeholder(tf.string, shape=[])
+            iterator = tf.data.Iterator.from_string_handle(handle, train_dataset.output_types,
+                                                           train_dataset.output_shapes)
+            train_iterator = train_dataset.make_one_shot_iterator()
+            dev_iterator = dev_dataset.make_one_shot_iterator()
 
-    with graph.as_default() as g:
-        train_dataset = get_batch_dataset(config.train_record_file, parser, config)
-        dev_dataset = get_batch_dataset(config.dev_record_file, parser, config)
-        handle = tf.placeholder(tf.string, shape=[])
-        iterator = tf.data.Iterator.from_string_handle(handle, train_dataset.output_types, train_dataset.output_shapes)
-        train_iterator = train_dataset.make_one_shot_iterator()
-        dev_iterator = dev_dataset.make_one_shot_iterator()
+            model = TextCNN(config=config, batch=iterator, optimizer=optimizer, graph=g)
 
-        model = TextCNN(config, iterator, optimizer)
+            sess_config = tf.ConfigProto(allow_soft_placement=True)
+            sess_config.gpu_options.allow_growth = True
 
-        sess_config = tf.ConfigProto(allow_soft_placement=True)
-        sess_config.gpu_options.allow_growth = True
+            patience = 0
+            best_f1 = 0.
 
-        patience = 0
-        best_f1 = 0.
+            with tf.Session(config=sess_config) as sess:
+                writer = tf.summary.FileWriter(config.textCNN_log)
+                sess.run(tf.global_variables_initializer())
+                saver = tf.train.Saver()
+                train_handle = sess.run(train_iterator.string_handle())
+                dev_handle = sess.run(dev_iterator.string_handle())
+                if os.path.exists(os.path.join(config.textCNN_path, "checkpoint")):
+                    saver.restore(sess, tf.train.latest_checkpoint(config.textCNN_path))
+                global_step = max(sess.run(model.global_step), 1)
+                logger.info("global_step = %s".format(global_step))
+                num_steps = config.epoches * (tf.cast(train_dataset.output_shapes[0] / config.batch_size, tf.int32) + 1)
+                for iter in tqdm(range(0, num_steps)):
+                    loss, train_op = sess.run([model.loss_val, model.train_op], feed_dict=
+                    {handle: train_handle, model.is_training_flag: True})
+                    if iter % config.period == 0:
+                        loss_sum = tf.Summary(value=[tf.Summary.Value(tag="model/loss", simple_value=loss), ])
+                        writer.add_summary(loss_sum, iter)
+                    if iter % config.checkpoint == 0:
+                        _, summ = evaluate_batch(model, config.val_num_batches, sess, "train", handle,
+                                                 train_handle)
+                        for s in summ:
+                            writer.add_summary(s, iter)
+                        metrics, summ = evaluate_batch(model, config.dev_num_bathes, sess, "dev", handle,
+                                                       dev_handle)
+                        dev_f1 = metrics["f1"]
+                        if dev_f1 < best_f1:
+                            patience += 1
+                            if patience > config.early_stop:
+                                break
+                        else:
+                            patience = 0
+                            best_f1 = max(best_f1, dev_f1)
+                        for s in summ:
+                            writer.add_summary(s, iter)
+                        writer.flush()
+                        filename = os.path.join(config.textCNN_path, "model_{}.ckpt".format(iter))
+                        saver.save(sess, filename)
 
-        with tf.Session(config=sess_config) as sess:
-            writer = tf.summary.FileWriter(config.textCNN_log)
-            sess.run(tf.global_variables_initializer())
-            saver = tf.train.Saver()
-            train_handle = sess.run(train_iterator.string_handle())
-            dev_handle = sess.run(dev_iterator.string_handle())
-            if os.path.exists(os.path.join(config.textCNN_path, "checkpoint")):
-                saver.restore(sess, tf.train.latest_checkpoint(config.textCNN_path))
-            global_step = max(sess.run(model.global_step), 1)
-            logger.info("global_step = %s".format(global_step))
-            num_steps = config.epoches * (tf.cast(train_dataset.output_shapes[0] / config.batch_size, tf.int32) + 1)
-            # TODO get train_eval_file
-            # TODO get dev_eval_file
-            # TODO get dev_num_bathes
-            for iter in tqdm(range(0, num_steps)):
-                loss, train_op = sess.run([model.loss_val, model.train_op], feed_dict=
-                {handle: train_handle, model.is_training_flag: True})
-                if iter % config.period == 0:
-                    loss_sum = tf.Summary(value=[tf.Summary.Value(tag="model/loss", simple_value=loss), ])
-                    writer.add_summary(loss_sum, iter)
-                if iter % config.checkpoint == 0:
-                    _, summ = evaluate_batch(model, config.val_num_batches, train_eval_file, sess, "train", handle,
-                                             train_handle)
-                    for s in summ:
-                        writer.add_summary(s, iter)
-                    metrics, summ = evaluate_batch(model, dev_num_bathes, dev_eval_file, sess, "dev", handle,
-                                                   dev_handle)
-                    dev_f1 = metrics["f1"]
-                    if dev_f1 < best_f1:
-                        patience += 1
-                        if patience > config.early_stop:
-                            break
-                    else:
-                        patience = 0
-                        best_f1 = max(best_f1, dev_f1)
-                    for s in summ:
-                        writer.add_summary(s, iter)
-                    writer.flush()
-                    filename = os.path.join(config.textCNN_path, "model_{}.ckpt".format(iter))
-                    saver.save(sess, filename)
+    def predict(config):
+        graph = tf.Graph()
+        logger.info("Loading model...")
+        with graph.as_default() as g:
+            test_batch = get_batch_dataset(config.test_record_file, get_record_parser(
+                config, is_test=True), config).make_one_shot_iterator()
 
+            model = TextCNN(config, batch=test_batch, graph=g)
 
-def predict(config):
-    model_path = config.model_path
-    test_dataset = get_batch_dataset(config.test_record_file)
+            sess_config = tf.ConfigProto(allow_soft_placement=True)
+            sess_config.gpu_options.allow_growth = True
+
+            with tf.Session(config=sess_config) as sess:
+                sess.run(tf.global_variables_initializer())
+                saver = tf.train.Saver()
+                saver.restore(sess, tf.train.latest_checkpoint(config.save_dir))
+                if config.decay < 1.0:
+                    sess.run(model.assign_vars)
+                losses = []
+                answer_dict = {}
+                remapped_dict = {}
+                for step in tqdm(range(total // config.batch_size + 1)):
+                    qa_id, loss, yp1, yp2 = sess.run(
+                        [model.qa_id, model.loss, model.yp1, model.yp2])
+                    answer_dict_, remapped_dict_ = convert_tokens(
+                        eval_file, qa_id.tolist(), yp1.tolist(), yp2.tolist())
+                    answer_dict.update(answer_dict_)
+                    remapped_dict.update(remapped_dict_)
+                    losses.append(loss)
+                loss = np.mean(losses)
+                metrics = evaluate(eval_file, answer_dict)
+                with open(config.answer_file, "w") as fh:
+                    json.dump(remapped_dict, fh)
+                print("Exact Match: {}, F1: {}".format(
+                    metrics['exact_match'], metrics['f1']))

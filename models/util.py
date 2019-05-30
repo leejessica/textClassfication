@@ -3,30 +3,25 @@ import tensorflow as tf
 import numpy as np
 
 
-def evaluate(eval_file, answer_dict):
-    f1 = precision = recall = 0
-    for key, value in answer_dict.items():
-        ground_truths = eval_file[key]["label"]
-        prediction = value
-        _, precision = tf.metrics.accuracy(labels=ground_truths, predictions=prediction)
-        _, recall = tf.metrics.recall(labels=ground_truths, predictions=prediction)
-        f1 = (precision + recall) / 2 * precision * recall
+def evaluate(labels, prediction):
+    _, precision = tf.metrics.accuracy(labels=labels, predictions=prediction)
+    _, recall = tf.metrics.recall(labels=labels, predictions=prediction)
+    f1 = (precision + recall) / 2 * precision * recall
     return {'f1': f1, 'precision': precision, 'recall': recall}
 
 
-def evaluate_batch(model, num_batches, eval_file, sess, data_type, handle, str_handle):
-    answer_dict = {}
+def evaluate_batch(model, num_batches, sess, data_type, handle, str_handle):
+    lables=[]
+    predictions=[]
     losses = []
     for _ in tqdm(range(1, num_batches + 1)):
-        text_id, loss, y = sess.run(
-            [model.text_id, model.loss_val, model.y], feed_dict={handle: str_handle, model.is_training_flag: False})
-        answer_dict_ = {}
-        for id, label in zip(text_id, y):
-            answer_dict_[str(id)] = label
-        answer_dict.update(answer_dict_)
+        loss, label, prediction= sess.run(
+            [model.loss_val, model.y, model.ligits], feed_dict={handle: str_handle, model.is_training_flag: False})
         losses.append(loss)
+        lables.append(label)
+        predictions.append(prediction)
     loss = np.mean(losses)
-    metrics = evaluate(eval_file, answer_dict)
+    metrics = evaluate(lables, predictions)
     metrics["loss"] = loss
     loss_sum = tf.Summary(value=[tf.Summary.Value(
         tag="{}/loss".format(data_type), simple_value=metrics["loss"]), ])
