@@ -6,7 +6,7 @@ from .layer import conv, batch_norm, relu, max_pool, linear
 import shutil
 import os
 from tqdm import tqdm
-from .util import evaluate_batch, get_batch_dataset, get_record_parser
+from .util import evaluate_batch, evaluate, get_batch_dataset, get_record_parser
 import numpy as np
 
 logging.basicconfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class TextCNN:
-    def __init__(self, config, batch, optimizer='Adam', graph=None):
+    def __init__(self, config, batch=None, optimizer='Adam', graph=None):
         self.graph = graph if graph is not None else tf.Graph()
         with self.graph.as_default():
             self.config = config
@@ -60,7 +60,8 @@ class TextCNN:
 
             self.is_training_flag = tf.placeholder(tf.bool, name="is_training_flag")
 
-            self.logits = self.forward()
+            self.forward()
+
             self.loss = self.loss_val(logits=self.logits, label=self.y)
 
             if self.is_training_flag:
@@ -123,10 +124,22 @@ class TextCNN:
             concat = tf.concat(block_outputs, axis=1, name='concat')
             flatten = tf.layers.flatten(concat)
             linear1 = linear(flatten, units=self.linear_hidden_size, name='linear_1', reuse=reuse)
-            bn1 = batch_norm(linear1, name='linear_BN', train=train, reuse=reuse)
+            bn1 = batch_norm(linear1, name='linear_BN', train=self.is_training_flag, reuse=reuse)
             relu1 = relu(bn1, name='linear_relu', reuse=reuse)
-            logits = linear(relu1, units=self.linear_hidden_size, name='linear_2', reuse=reuse)
-            return logits
+            self.logits = linear(relu1, units=self.linear_hidden_size, name='linear_2', reuse=reuse)
+
+
+        if self.config.decay is not None:
+            self.var_ema = tf.train.ExponentialMovingAverage(self.config.decay)
+            ema_op = self.var_ema.apply(tf.trainable_variables())
+            with tf.control_dependencies([ema_op]):
+                self.loss = tf.identity(self.loss)
+
+                self.assign_vars = []
+                for var in tf.global_variables():
+                    v = self.var_ema.average(var)
+                    if v:
+                        self.assign_vars.append(tf.assign(var, v))
 
     def loss_multilabel(self, labels, logits, l2_lambda=0.0001):
         with tf.name_scope("loss"):
@@ -156,111 +169,109 @@ class TextCNN:
             loss = loss + l2_losses
         return loss
 
-    def train(config, optimizer='Adam', restore=False):
-        """
-        :param optimizer: name of optimizer, full list in OPTIMIZER_CLS_NAMES constant
-        :param restore: Flag if previous model should be restored
-        :return:
-        """
 
-        if not restore:
-            logger.info("Removing '{:}'".format(config.textCNN_path))
-            shutil.rmtree(config.model_path, ignore_errors=True)
+def train(config, optimizer='Adam', restore=False):
+    """
+    :param optimizer: name of optimizer, full list in OPTIMIZER_CLS_NAMES constant
+    :param restore: Flag if previous model should be restored
+    :return:
+    """
 
-        if not os.path.exists(config.model_path):
-            logger.info("Allocating '{:}'".format(config.textCNN_path))
+    if not restore:
+        logger.info("Removing '{:}'".format(config.textCNN_path))
+        shutil.rmtree(config.model_path, ignore_errors=True)
 
-        graph = tf.Graph()
+    if not os.path.exists(config.model_path):
+        logger.info("Allocating '{:}'".format(config.textCNN_path))
 
-        parser = get_record_parser(config)
+    graph = tf.Graph()
 
-        with graph.as_default() as g:
-            train_dataset = get_batch_dataset(config.train_record_file, parser, config)
-            dev_dataset = get_batch_dataset(config.dev_record_file, parser, config)
-            handle = tf.placeholder(tf.string, shape=[])
-            iterator = tf.data.Iterator.from_string_handle(handle, train_dataset.output_types,
-                                                           train_dataset.output_shapes)
-            train_iterator = train_dataset.make_one_shot_iterator()
-            dev_iterator = dev_dataset.make_one_shot_iterator()
+    parser = get_record_parser(config)
 
-            model = TextCNN(config=config, batch=iterator, optimizer=optimizer, graph=g)
+    with graph.as_default() as g:
+        train_dataset = get_batch_dataset(config.train_record_file, parser, config)
+        dev_dataset = get_batch_dataset(config.dev_record_file, parser, config)
+        handle = tf.placeholder(tf.string, shape=[])
+        iterator = tf.data.Iterator.from_string_handle(handle, train_dataset.output_types,
+                                                       train_dataset.output_shapes)
+        train_iterator = train_dataset.make_one_shot_iterator()
+        dev_iterator = dev_dataset.make_one_shot_iterator()
 
-            sess_config = tf.ConfigProto(allow_soft_placement=True)
-            sess_config.gpu_options.allow_growth = True
+        model = TextCNN(config=config, batch=iterator, optimizer=optimizer, graph=g)
 
-            patience = 0
-            best_f1 = 0.
+        sess_config = tf.ConfigProto(allow_soft_placement=True)
+        sess_config.gpu_options.allow_growth = True
 
-            with tf.Session(config=sess_config) as sess:
-                writer = tf.summary.FileWriter(config.textCNN_log)
-                sess.run(tf.global_variables_initializer())
-                saver = tf.train.Saver()
-                train_handle = sess.run(train_iterator.string_handle())
-                dev_handle = sess.run(dev_iterator.string_handle())
-                if os.path.exists(os.path.join(config.textCNN_path, "checkpoint")):
-                    saver.restore(sess, tf.train.latest_checkpoint(config.textCNN_path))
-                global_step = max(sess.run(model.global_step), 1)
-                logger.info("global_step = %s".format(global_step))
-                num_steps = config.epoches * (tf.cast(train_dataset.output_shapes[0] / config.batch_size, tf.int32) + 1)
-                for iter in tqdm(range(0, num_steps)):
-                    loss, train_op = sess.run([model.loss_val, model.train_op], feed_dict=
-                    {handle: train_handle, model.is_training_flag: True})
-                    if iter % config.period == 0:
-                        loss_sum = tf.Summary(value=[tf.Summary.Value(tag="model/loss", simple_value=loss), ])
-                        writer.add_summary(loss_sum, iter)
-                    if iter % config.checkpoint == 0:
-                        _, summ = evaluate_batch(model, config.val_num_batches, sess, "train", handle,
-                                                 train_handle)
-                        for s in summ:
-                            writer.add_summary(s, iter)
-                        metrics, summ = evaluate_batch(model, config.dev_num_bathes, sess, "dev", handle,
-                                                       dev_handle)
-                        dev_f1 = metrics["f1"]
-                        if dev_f1 < best_f1:
-                            patience += 1
-                            if patience > config.early_stop:
-                                break
-                        else:
-                            patience = 0
-                            best_f1 = max(best_f1, dev_f1)
-                        for s in summ:
-                            writer.add_summary(s, iter)
-                        writer.flush()
-                        filename = os.path.join(config.textCNN_path, "model_{}.ckpt".format(iter))
-                        saver.save(sess, filename)
+        patience = 0
+        best_f1 = 0.
 
-    def predict(config):
-        graph = tf.Graph()
-        logger.info("Loading model...")
-        with graph.as_default() as g:
-            test_batch = get_batch_dataset(config.test_record_file, get_record_parser(
-                config, is_test=True), config).make_one_shot_iterator()
+        with tf.Session(config=sess_config) as sess:
+            writer = tf.summary.FileWriter(config.textCNN_log)
+            sess.run(tf.global_variables_initializer())
+            saver = tf.train.Saver()
+            train_handle = sess.run(train_iterator.string_handle())
+            dev_handle = sess.run(dev_iterator.string_handle())
+            if os.path.exists(os.path.join(config.textCNN_path, "checkpoint")):
+                saver.restore(sess, tf.train.latest_checkpoint(config.textCNN_path))
+            global_step = max(sess.run(model.global_step), 1)
+            logger.info("global_step = %s".format(global_step))
+            # todo fix train_dataset.output_shapes[0] bug
+            num_steps = config.epoches * (tf.cast(train_dataset.output_shapes[0] / config.batch_size, tf.int32) + 1)
+            for iter in tqdm(range(0, num_steps)):
+                loss, train_op = sess.run([model.loss_val, model.train_op], feed_dict=
+                {handle: train_handle, model.is_training_flag: True})
+                if iter % config.period == 0:
+                    loss_sum = tf.Summary(value=[tf.Summary.Value(tag="model/loss", simple_value=loss), ])
+                    writer.add_summary(loss_sum, iter)
+                if iter % config.checkpoint == 0:
+                    _, summ = evaluate_batch(model, config.val_num_batches, sess, "train", handle,
+                                             train_handle)
+                    for s in summ:
+                        writer.add_summary(s, iter)
+                    metrics, summ = evaluate_batch(model, config.dev_num_bathes, sess, "dev", handle,
+                                                   dev_handle)
+                    dev_f1 = metrics["f1"]
+                    if dev_f1 < best_f1:
+                        patience += 1
+                        if patience > config.early_stop:
+                            break
+                    else:
+                        patience = 0
+                        best_f1 = max(best_f1, dev_f1)
+                    for s in summ:
+                        writer.add_summary(s, iter)
+                    writer.flush()
+                    filename = os.path.join(config.textCNN_path, "model_{}.ckpt".format(iter))
+                    saver.save(sess, filename)
 
-            model = TextCNN(config, batch=test_batch, graph=g)
 
-            sess_config = tf.ConfigProto(allow_soft_placement=True)
-            sess_config.gpu_options.allow_growth = True
+def test(config):
+    graph = tf.Graph()
+    logger.info("Loading model ...")
+    with graph.as_default() as g:
+        test_batch = get_batch_dataset(config.test_record_file, get_record_parser(
+            config), config).make_one_shot_iterator()
 
-            with tf.Session(config=sess_config) as sess:
-                sess.run(tf.global_variables_initializer())
-                saver = tf.train.Saver()
-                saver.restore(sess, tf.train.latest_checkpoint(config.save_dir))
-                if config.decay < 1.0:
-                    sess.run(model.assign_vars)
-                losses = []
-                answer_dict = {}
-                remapped_dict = {}
-                for step in tqdm(range(total // config.batch_size + 1)):
-                    qa_id, loss, yp1, yp2 = sess.run(
-                        [model.qa_id, model.loss, model.yp1, model.yp2])
-                    answer_dict_, remapped_dict_ = convert_tokens(
-                        eval_file, qa_id.tolist(), yp1.tolist(), yp2.tolist())
-                    answer_dict.update(answer_dict_)
-                    remapped_dict.update(remapped_dict_)
-                    losses.append(loss)
-                loss = np.mean(losses)
-                metrics = evaluate(eval_file, answer_dict)
-                with open(config.answer_file, "w") as fh:
-                    json.dump(remapped_dict, fh)
-                print("Exact Match: {}, F1: {}".format(
-                    metrics['exact_match'], metrics['f1']))
+        model = TextCNN(config=config, batch=test_batch, graph=g)
+
+        sess_config = tf.ConfigProto(allow_soft_placement=True)
+        sess_config.gpu_options.allow_growth = True
+
+        with tf.Session(config=sess_config) as sess:
+            sess.run(tf.global_variables_initializer())
+            saver = tf.train.Saver()
+            saver.restore(sess, tf.train.latest_checkpoint(config.textCNN_path))
+            if config.decay < 1.0:
+                sess.run(model.assign_vars)
+
+            losses = []
+
+            for _ in tqdm(range(config.test_steps)):
+                loss, y, logits = sess.run([model.loss_val, model.y, model.logits],
+                                           feed_dict={model.is_training_flag: False})
+                losses.append(loss)
+            loss = np.mean(losses)
+            metrics = evaluate(labels=y, prediction=logits)
+
+            logger.info("precision: {}, recall:{}, F1: {}, average_loss:{}".format(
+                metrics['precision'], metrics['recall'], metrics['f1'], loss))

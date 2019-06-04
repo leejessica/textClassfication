@@ -27,7 +27,7 @@ class config(object):
     with open(char_embedding_path, "r") as fh:
         char_mat = np.array(json.load(fh), dtype=np.float32)
     with open(labels_path, "r") as fh:
-        labels=np.array(json.load(fh), dtype=np.float32)
+        labels = np.array(json.load(fh), dtype=np.float32)
     # with open(train_data_path, "r") as fh:
     #     train_eval_file = json.load(fh)
     # with open(config.dev_eval_file, "r") as fh:
@@ -38,12 +38,12 @@ class config(object):
 
 
     # Set universal hyperparameter
-    is_demo=False
+    is_demo = False
     batch_size = 256
-    val_num_batches=10
+    val_num_batches = 10
     epoches = 64
     max_sequence_length = 400
-    char_limit=10
+    char_limit = 10
     use_word = True
     use_char = True
     word_dim = 300
@@ -54,49 +54,45 @@ class config(object):
     drop_keep_pro = 0.5
     initializer = tf.random_normal_initializer(stddev=0.1)
     clip_gradients = 5.0
-    multi_label_flag=False
-    decay_rate=0.96
-    decay_steps=100
-    epoches=10000
-    early_stop=10
-    is_demo=True
-    period=100
-    checkpoint=1000
-    capacity=1500
-    model_dir='model'
-    data_dir='data'
-    log_dir='log'
-    train_record_file=""
-    dev_record_file=""
-
+    multi_label_flag = False
+    decay_rate = 0.96
+    decay_steps = 100
+    epoches = 10000
+    early_stop = 10
+    is_demo = True
+    period = 100
+    checkpoint = 1000
+    capacity = 1500
+    model_dir = 'model'
+    data_dir = 'data'
+    log_dir = 'log'
+    train_record_file = ""
+    dev_record_file = ""
+    decay=0.9999
+    linear_hidden_size=512
 
     # ------------------------------------------------------------------
     # Set hyperparameter for textCNN
     num_filters = 200  # number of convolutional filters in one layer
     filter_sizes = [1, 2, 3, 4, 5]
     linear_hidden_size = 2000  # number of cell in fully-connected layer
-    pool_size=2
+    pool_size = 2
 
-    textCNN_path=os.path.join(model_dir, "textCNN")
-    textCNN_log=os.path.join(log_dir, "textCNN")
+    textCNN_path = os.path.join(model_dir, "textCNN")
+    textCNN_log = os.path.join(log_dir, "textCNN")
 
 
-    num_classes = 1999  # number of classes
-    embedding_dim = 256  # embedding size
 
-    kmax_pooling = 2  # k
-    hidden_size = 256  # LSTM hidden size
-    num_layers = 2  # LSTM layers
-    inception_dim = 512  # inception的卷积核数
+     # Set hyperparameter for textRNN
+    bilstm_hidden_size=128
+    singlelstm_hidden_size=256
 
-    # vocab_size = 11973 # num of chars
-    vocab_size = 411720  # num of words
-    kernel_size = 3  # 单尺度卷积核
-    kernel_sizes = [2, 3, 4]  # 多尺度卷积核
-    title_seq_len = 50  # 标题长度,word为30 char为50
-    content_seq_len = 250  # 描述长度 word为120 char为250
-    type_ = 'word'  # word 和char
-    all = False  # 模型同时训练char和word
+
+
+    # Set hyperparameter for HAN (Hierarchical Attention Network )
+
+
+
 
     embedding_path = '/mnt/7/zhihu/ieee_zhihu_cup/data/char_embedding.npz'  # Embedding
     train_data_path = '/mnt/7/zhihu/ieee_zhihu_cup/data/train.npz'  # train

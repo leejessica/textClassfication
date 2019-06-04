@@ -95,8 +95,8 @@ def build_features(config, examples, data_type, out_file, word2idx_dict, char2id
     logger.info("Processing {} examples...".format(data_type))
     writer = tf.python_io.TFRecordWriter(out_file)
     for example in tqdm(examples):
-        context_idxs = np.zeros([config.max_sequence_length], dtype=np.int32)
-        context_char_idxs = np.zeros([config.max_sequence_length, config.char_limit], dtype=np.int32)
+        word_idxs = np.zeros([config.max_sequence_length], dtype=np.int32)
+        char_idxs = np.zeros([config.max_sequence_length, config.char_limit], dtype=np.int32)
 
         def _get_word(word):
             for each in (word, word.lower(), word.capitalize(), word.upper()):
@@ -111,7 +111,7 @@ def build_features(config, examples, data_type, out_file, word2idx_dict, char2id
 
         if config.use_word:
             for i, token in enumerate(example['text']):
-                context_idxs[i] = _get_word(token)
+                word_idxs[i] = _get_word(token)
 
         if config.use_char:
             for i, token in enumerate(example['text']):
@@ -120,7 +120,7 @@ def build_features(config, examples, data_type, out_file, word2idx_dict, char2id
                     if j == config.char_limit:
                         break
                     else:
-                        context_char_idxs[i, j] = _get_char(char)
+                        char_idxs[i, j] = _get_char(char)
 
         label = example['label']
 
@@ -169,8 +169,7 @@ def prepro(config):
 
     save(config.word_emb_file, word_emb_mat, message="word embedding")
     save(config.char_emb_file, char_emb_mat, message="char embedding")
-    save(config.train_eval_file, train_eval, message="train eval")
-    save(config.dev_eval_file, dev_eval, message="dev eval")
-    save(config.test_eval_file, test_eval, message="test eval")
     save(config.word_dictionary, word2idx_dict, message="word dictionary")
     save(config.char_dictionary, char2idx_dict, message="char dictionary")
+
+

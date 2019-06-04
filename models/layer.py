@@ -78,3 +78,23 @@ def linear(inputs, units, name="linear", activation=None, reuse=None):
                                   reuse=reuse
                                   )
         return outputs
+
+
+def bi_lstm(inputs, hidden_size, name="Bi-lstm", dropout_keep_prob=None, reuse=None):
+    with tf.variable_scope(name, reuse=reuse):
+        lstm_fw_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=hidden_size)
+        lstm_bw_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=hidden_size)
+        if dropout_keep_prob is not None:
+            lstm_fw_cell = tf.nn.rnn_cell.DropoutWrapper(lstm_fw_cell, output_keep_prob=dropout_keep_prob)
+            lstm_bw_cell = tf.nn.rnn_cell.DropoutWrapper(lstm_bw_cell, output_keep_prob=dropout_keep_prob)
+    outputs, states = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, inputs)
+    return outputs, states
+
+
+def lstm(inputs, hidden_size, name="Single-lstm", dropout_keep_prob=None, reuse=None):
+    with tf.variable_scope(name, reuse=reuse):
+        lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=hidden_size)
+        if dropout_keep_prob is not None:
+            lstm_cell = tf.nn.rnn_cell.DropoutWrapper(lstm_cell, output_keep_prob=dropout_keep_prob)
+        outputs, states = tf.nn.dynamic_rnn(lstm_cell, inputs)
+    return outputs, states
