@@ -1,5 +1,4 @@
 import tensorflow as tf
-import numpy as np
 
 initializer = lambda: tf.contrib.layers.variance_scaling_initializer(factor=1.0,
                                                                      mode='FAN_AVG',
@@ -87,7 +86,8 @@ def bi_lstm(inputs, hidden_size, name="Bi-lstm", dropout_keep_prob=None, reuse=N
         if dropout_keep_prob is not None:
             lstm_fw_cell = tf.nn.rnn_cell.DropoutWrapper(lstm_fw_cell, output_keep_prob=dropout_keep_prob)
             lstm_bw_cell = tf.nn.rnn_cell.DropoutWrapper(lstm_bw_cell, output_keep_prob=dropout_keep_prob)
-    outputs, states = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, inputs)
+        outputs, states = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, inputs)
+        outputs=tf.concat(outputs, axis=-1)
     return outputs, states
 
 
@@ -98,3 +98,44 @@ def lstm(inputs, hidden_size, name="Single-lstm", dropout_keep_prob=None, reuse=
             lstm_cell = tf.nn.rnn_cell.DropoutWrapper(lstm_cell, output_keep_prob=dropout_keep_prob)
         outputs, states = tf.nn.dynamic_rnn(lstm_cell, inputs)
     return outputs, states
+
+
+def bi_gru(inputs, hidden_size, encoder_level, dropout_keep_prob=None, reuse=None):
+    """
+
+    :param inputs: [batch_size, seq_length, embed_size]
+    :param hidden_size: number of GRU cell
+    :param name: scope name
+    :param dropout_keep_prob:
+    :param reuse:  (optional) Python boolean describing whether to reuse variables in an existing scope. If not True, and the existing scope already has the given variables, an error is raised.
+    :return:
+    """
+    with tf.variable_scope("encoder_" + str(encoder_level), reuse=reuse):
+        gru_fw_cell = tf.nn.rnn_cell.GRUCell(num_units=hidden_size)
+        gru_bw_cell = tf.nn.rnn_cell.GRUCell(num_units=hidden_size)
+        if dropout_keep_prob is not None:
+            gru_fw_cell = tf.nn.rnn_cell.DropoutWrapper(gru_fw_cell, output_keep_prob=dropout_keep_prob)
+            gru_bw_cell = tf.nn.rnn_cell.DropoutWrapper(gru_bw_cell, output_keep_prob=dropout_keep_prob)
+            outputs, states = tf.nn.bidirectional_dynamic_rnn(gru_fw_cell, gru_bw_cell, inputs)
+            outputs=tf.concat(outputs, axis=-1)
+    return outputs, states
+
+
+def attention(self, input_sequences, attention_level, reuse=False):
+    """
+    :param input_sequence: [batch_size,seq_length,num_units]
+    :param attention_level: word or sentence level
+    :return: [batch_size,hidden_size]
+    """
+    num_units = input_sequences.get_shape().as_list()[-1]  # get last dimension
+    with tf.variable_scope("attention_" + str(attention_level), reuse=reuse):
+        v_attention = tf.get_variable("u_attention" + attention_level, shape=[num_units], initializer=self.initializer)
+        # 1.one-layer MLP
+        u = tf.layers.dense(input_sequences, num_units, activation=tf.nn.tanh,
+                            use_bias=True)  # [batch_size,seq_legnth,num_units].no-linear
+        # 2.compute weight by compute simility of u and attention vector v
+        score = tf.multiply(u, v_attention)  # [batch_size,seq_length,num_units]
+        weight = tf.reduce_sum(score, axis=-1, keepdims=True)  # [batch_size,seq_length,1]
+        # 3.weight sum
+        attention_representation = tf.reduce_sum(tf.multiply(u, weight), axis=1)  # [batch_size,num_units]
+    return attention_representation

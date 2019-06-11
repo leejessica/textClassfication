@@ -90,7 +90,7 @@ class config(object):
 
 
     # Set hyperparameter for HAN (Hierarchical Attention Network )
-
+    han_max_sentece_num=100
 
 
 

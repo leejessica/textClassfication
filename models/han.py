@@ -2,7 +2,7 @@
 
 import tensorflow as tf
 import logging
-from .layer import bi_lstm, lstm, linear
+from .layer import bi_gru, attention, linear
 import shutil
 import os
 from tqdm import tqdm
@@ -23,40 +23,35 @@ class HierarchicalAttention:
             self.num_classes = config.num_classes
             self.batch_size = config.batch_size
             self.sequence_length = config.max_sequence_length
+            self.max_sentence_num = config.han_max_sentece_num
             self.vocab_size = config.vocab_size
             self.learning_rate = tf.Variable(config.learning_rate, trainable=False,
                                              name="learning_rate")  # ADD learning_rate
-            self.dropout_keep_prob=config.drop_keep_pro
+            self.dropout_keep_prob = config.drop_keep_pro
             self.learning_rate_decay_half_op = tf.assign(self.learning_rate, self.learning_rate * config.decay_rate_big)
             self.initializer = config.initializer
             self.linear_hidden_size = config.linear_hidden_size
             self.pool_size = config.pool_size
             self.global_step = tf.get_variable('global_step', dtype=tf.int32, initializer=tf.constant_initializer(0),
                                                trainable=False)
-            if config.use_word:
-                self.word_mat = tf.get_variable("word_mat", initializer=tf.constant(config.word_mat, dtype=tf.float32),
-                                                trainable=False)
-            if config.use_char:
-                self.char_mat = tf.get_variable("char_mat", initializer=tf.constant(config.char_mat, dtype=tf.float32),
-                                                trainable=False)
+            self.word_mat = tf.get_variable("word_mat", initializer=tf.constant(config.word_mat, dtype=tf.float32),
+                                            trainable=False)
 
             if config.multi_label_flag:
                 if config.is_demo:
-                    self.x_word = tf.placeholder("float", shape=[None, config.max_sequence_length], name="x_word")
-                    self.x_char = tf.placeholder("flaot", shape=[None, config.max_sequence_length, config.char_limit],
-                                                 name="x_char")
+                    self.x_word = tf.placeholder("float", shape=[None, self.max_sentence_num, self.sequence_length],
+                                                 name="x_word")
                     self.y = tf.placeholder("float", shape=[None, self.num_classes], name="y")
                 else:
-                    self.x_word, self.x_char, self.y = batch.get_next()
+                    self.x_word, _, self.y = batch.get_next()
                     self.loss_val = self.loss_multilabel()
             else:
                 if config.is_demo:
-                    self.x_word = tf.placeholder("float", shape=[None, config.max_sequence_length], name="x_word")
-                    self.x_char = tf.placeholder("float", shape=[None, config.max_sequence_length, config.char_limit],
-                                                 name="x_char")
+                    self.x_word = tf.placeholder("float", shape=[None, self.max_sentence_num, self.sequence_length],
+                                                 name="x_word")
                     self.y = tf.placeholder("float", shape=[None], name="y")
                 else:
-                    self.x_word, self.x_char, self.y = batch.get_next()
+                    self.x_word, _, self.y = batch.get_next()
                     self.loss_val = self.loss()
 
             self.is_training_flag = tf.placeholder(tf.bool, name="is_training_flag")
@@ -75,46 +70,23 @@ class HierarchicalAttention:
                                                                 learning_rate=self.learning_rate, optimizer="Adam",
                                                                 clip_gradients=config.clip_gradients)
 
-    def create_model(self, inputs, dropout_keep_prob=None, reuse=None):
-        """
-        block: Bi_LSTM --> Single_LSTM --> Linear
+    def forward(self, reuse=None):
+        with tf.variable_scope("Input_Embedding_Layer"):
+            word_emb = tf.reshape(tf.nn.embedding_lookup(self.word_mat, self.x_word),
+                                  [self.batch_size, self.max_sentence_num, self.sequence_length, self.config.word_dim])
+            word_emb = [tf.squeeze(x) for x in tf.split(word_emb, self.max_sentence_num,
+                                                        axis=1)]  # a list.length is max_sentence_num, each element is:[None,sequence_length,embed_size]
 
-        """
+        word_attention_list = []
+        for i in range(self.max_sentence_num):
+            sentence = word_emb[i]  # [batch_size, sequence_length, embed_size]
+            reuse_flag = True if i > 0 else False
+            word_encoded, _ = bi_gru(sentence, self.config.word_dim, 'word_level', self.dropout_keep_prob,
+                                  reuse=reuse_flag)
+            word_attention = attention(word_encoded, 'word_attention', reuse=reuse_flag)
+            word_attention_list.append(word_attention)
 
-        with tf.variable_scope("textRNN", reuse=reuse):
-            outputs, _ = bi_lstm(inputs, self.bilstm_hidden_size, dropout_keep_prob=dropout_keep_prob, reuse=reuse)
-            _, final_states = lstm(outputs, self.singlelstm_hidden_size, dropout_keep_prob=dropout_keep_prob,
-                                   reuse=reuse)
-            linear_outputs = linear(final_states, self.linear_hidden_size, reuse=reuse)
-            return linear_outputs
 
-    def forward(self, is_max=True, reuse=None):
-        with tf.variable_scope("Input_Embedding_Layer", reuse=reuse):
-            word_shape = tf.shape(self.x_word)
-            word_emb = tf.get_variable(initializer=tf.zeros_initializer,
-                                       shape=[word_shape[0], word_shape[1], self.config.word_dim], name="word_emb")
-            char_shape = tf.shape(self.x_char)
-            char_emb = tf.get_variable(initializer=tf.zeros_initializer,
-                                       shape=[char_shape[0], char_shape[1], char_shape[2], self.config.char_dim],
-                                       name="char_emb")
-            if self.config.use_word:
-                word_emb = tf.reshape(tf.nn.embedding_lookup(self.word_mat, self.x_word),
-                                      [self.batch_size, self.config.max_sequence_length, self.config.word_dim])
-            if self.config.use_char:
-                char_emb = tf.reshape(tf.nn.embedding_lookup(self.char_mat, self.x_char),
-                                      [self.batch_size, self.config.max_sequence_length, self.config.char_limit,
-                                       self.config.char_dim])
-                if is_max:
-                    char_emb = tf.reduce_max(char_emb, axis=-1)
-                else:
-                    char_emb = tf.reduce_mean(char_emb, axis=-1)
-
-            if self.config.use_char:
-                input_emb = tf.concat(values=[word_emb, char_emb], axis=-1, name="input_emb")
-            else:
-                input_emb = word_emb
-
-        self.logits = self.create_model(input_emb, dropout_keep_prob=self.dropout_keep_prob, reuse=reuse)
 
         if self.config.decay is not None:
             self.var_ema = tf.train.ExponentialMovingAverage(self.config.decay)
@@ -128,33 +100,35 @@ class HierarchicalAttention:
                     if v:
                         self.assign_vars.append(tf.assign(var, v))
 
-    def loss_multilabel(self, labels, logits, l2_lambda=0.0001):
-        with tf.name_scope("loss"):
-            # input: `logits` and `labels` must have the same shape `[batch_size, num_classes]`
-            # output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
-            # input_y:shape=(?, 1999); logits:shape=(?, 1999)
-            # let `x = logits`, `z = labels`.  The logistic loss is:z * -log(sigmoid(x)) + (1 - z) * -log(1 - sigmoid(x))
-            losses = tf.nn.sigmoid_cross_entropy_with_logits(labels=labels,
-                                                             logits=logits);
-            logger.info("sigmoid_cross_entropy_with_logits.losses:", losses)  # shape=(batch_size, num_classes).
-            losses = tf.reduce_sum(losses, axis=1)  # shape=(?,). loss for all data in the batch
-            loss = tf.reduce_mean(losses)  # shape=().   average loss in the batch
-            l2_losses = tf.add_n(
-                [tf.nn.l2_loss(v) for v in tf.trainable_variables() if 'bias' not in v.name]) * l2_lambda
-            loss = loss + l2_losses
-        return loss
 
-    def loss(self, labels, logits, l2_lambda=0.0001):
-        with tf.name_scope("loss"):
-            # input: `logits`:[batch_size, num_classes], and `labels`:[batch_size]
-            # output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
-            losses = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels,
-                                                                    logits=logits)
-            loss = tf.reduce_mean(losses)
-            l2_losses = tf.add_n(
-                [tf.nn.l2_loss(v) for v in tf.trainable_variables() if 'bias' not in v.name]) * l2_lambda
-            loss = loss + l2_losses
-        return loss
+def loss_multilabel(self, labels, logits, l2_lambda=0.0001):
+    with tf.name_scope("loss"):
+        # input: `logits` and `labels` must have the same shape `[batch_size, num_classes]`
+        # output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
+        # input_y:shape=(?, 1999); logits:shape=(?, 1999)
+        # let `x = logits`, `z = labels`.  The logistic loss is:z * -log(sigmoid(x)) + (1 - z) * -log(1 - sigmoid(x))
+        losses = tf.nn.sigmoid_cross_entropy_with_logits(labels=labels,
+                                                         logits=logits);
+        logger.info("sigmoid_cross_entropy_with_logits.losses:", losses)  # shape=(batch_size, num_classes).
+        losses = tf.reduce_sum(losses, axis=1)  # shape=(?,). loss for all data in the batch
+        loss = tf.reduce_mean(losses)  # shape=().   average loss in the batch
+        l2_losses = tf.add_n(
+            [tf.nn.l2_loss(v) for v in tf.trainable_variables() if 'bias' not in v.name]) * l2_lambda
+        loss = loss + l2_losses
+    return loss
+
+
+def loss(self, labels, logits, l2_lambda=0.0001):
+    with tf.name_scope("loss"):
+        # input: `logits`:[batch_size, num_classes], and `labels`:[batch_size]
+        # output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
+        losses = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels,
+                                                                logits=logits)
+        loss = tf.reduce_mean(losses)
+        l2_losses = tf.add_n(
+            [tf.nn.l2_loss(v) for v in tf.trainable_variables() if 'bias' not in v.name]) * l2_lambda
+        loss = loss + l2_losses
+    return loss
 
 
 def train(config, optimizer='Adam', restore=False):
