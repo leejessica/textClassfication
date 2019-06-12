@@ -139,3 +139,5 @@ def attention(self, input_sequences, attention_level, reuse=False):
         # 3.weight sum
         attention_representation = tf.reduce_sum(tf.multiply(u, weight), axis=1)  # [batch_size,num_units]
     return attention_representation
+
+

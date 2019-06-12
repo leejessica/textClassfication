@@ -18,8 +18,7 @@ class HierarchicalAttention:
         self.graph = graph if graph is not None else tf.Graph()
         with self.graph.as_default():
             self.config = config
-            self.bilstm_hidden_size = config.bilstm_hidden_size
-            self.singlelstm_hidden_size = config.singlelstm_hidden_size
+            self.hidden_size = config.han_hidden_size
             self.num_classes = config.num_classes
             self.batch_size = config.batch_size
             self.sequence_length = config.max_sequence_length
@@ -71,22 +70,28 @@ class HierarchicalAttention:
                                                                 clip_gradients=config.clip_gradients)
 
     def forward(self, reuse=None):
+        # word_encoder --> word_attention --> sentence_encoder -->sentence_attention
         with tf.variable_scope("Input_Embedding_Layer"):
             word_emb = tf.reshape(tf.nn.embedding_lookup(self.word_mat, self.x_word),
                                   [self.batch_size, self.max_sentence_num, self.sequence_length, self.config.word_dim])
             word_emb = [tf.squeeze(x) for x in tf.split(word_emb, self.max_sentence_num,
                                                         axis=1)]  # a list.length is max_sentence_num, each element is:[None,sequence_length,embed_size]
 
+        # word_level
         word_attention_list = []
         for i in range(self.max_sentence_num):
             sentence = word_emb[i]  # [batch_size, sequence_length, embed_size]
             reuse_flag = True if i > 0 else False
-            word_encoded, _ = bi_gru(sentence, self.config.word_dim, 'word_level', self.dropout_keep_prob,
-                                  reuse=reuse_flag)
-            word_attention = attention(word_encoded, 'word_attention', reuse=reuse_flag)
+            word_encoded, _ = bi_gru(sentence, self.hidden_size, 'word_level', self.dropout_keep_prob,
+                                     reuse=reuse_flag)
+            word_attention = attention(word_encoded, 'word_attention', reuse=reuse_flag)  # [batch_size,self.hidden_size*2]
             word_attention_list.append(word_attention)
-
-
+        sentence_encoder_input = tf.stack(word_attention_list, axis=1)  # [batch_size,num_sentence,self.hidden_size*2]
+        # sentence_level
+        sentence_encoder_input=tf.reshape(sentence_encoder_input, (-1, self.max_sentence_num, self.hidden_size*2))
+        sentence_encoded, _ =bi_gru(sentence_encoder_input, self.hidden_size*2, 'sentence_level', self.dropout_keep_prob)
+        sentence_attention=attention(sentence_encoded, 'sentence_attention') #[batch_size, self.hidden_size*4]
+        self.logits=linear(sentence_attention, units=self.linear_hidden_size, name='han_linear', activation=tf.nn.relu)
 
         if self.config.decay is not None:
             self.var_ema = tf.train.ExponentialMovingAverage(self.config.decay)
@@ -158,7 +163,7 @@ def train(config, optimizer='Adam', restore=False):
         train_iterator = train_dataset.make_one_shot_iterator()
         dev_iterator = dev_dataset.make_one_shot_iterator()
 
-        model = TextRNN(config=config, batch=iterator, optimizer=optimizer, graph=g)
+        model = HierarchicalAttention(config=config, batch=iterator, optimizer=optimizer, graph=g)
 
         sess_config = tf.ConfigProto(allow_soft_placement=True)
         sess_config.gpu_options.allow_growth = True
@@ -213,7 +218,7 @@ def test(config):
         test_batch = get_batch_dataset(config.test_record_file, get_record_parser(
             config), config).make_one_shot_iterator()
 
-        model = TextRNN(config=config, batch=test_batch, graph=g)
+        model = HierarchicalAttention(config=config, batch=test_batch, graph=g)
 
         sess_config = tf.ConfigProto(allow_soft_placement=True)
         sess_config.gpu_options.allow_growth = True
