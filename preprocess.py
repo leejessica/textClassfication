@@ -35,9 +35,8 @@ def process_file(filename, data_type, word_counter, char_counter, seq=';'):
     examples = []
     eval_examples = {}
     total = 0
-    with open(filename, "r") as fh:
-        lines = fh.readlines()
-        for line in lines:
+    with open(filename, "r", encoding='utf-8') as fh:
+        for line in fh:
             total += 1
             text_tokens = word_tokenize(line.split(seq)[3])
             text_chars = [list(token) for token in text_tokens]
@@ -126,11 +125,12 @@ def build_features(config, examples, data_type, out_file, word2idx_dict, char2id
 
         record = tf.train.Example(features=tf.train.Features(feature={
             "id": tf.train.Feature(int64_list=tf.train.Int64List(value=[label])),
-            "text_idxs": tf.train.Feature(bytes_list=tf.train.BytesList(value=[context_idxs.tostring()])),
-            "char_idxs": tf.train.Feature(bytes_list=tf.train.BytesList(value=[context_char_idxs.tostring()])),
+            "text_idxs": tf.train.Feature(bytes_list=tf.train.BytesList(value=[word_idxs.tostring()])),
+            "char_idxs": tf.train.Feature(bytes_list=tf.train.BytesList(value=[char_idxs.tostring()])),
             "label": tf.train.Feature(int64_list=tf.train.Int64List(value=[label]))
         }))
         writer.write(record.SerializeToString())
+        writer.close()
     return 1
 
 
